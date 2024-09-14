@@ -14,7 +14,8 @@ This repository contains the datasets and code used in the Spatial Workshop cond
 The workshop is designed for public health professionals and researchers interested in applying spatial analysis techniques to health data. By the end of the workshop, participants will have hands-on experience in handling spatial datasets, understanding point pattern analysis, and using R for geospatial data visualization.
 
 ## Getting Started
-To get started, create a new project from Git repository in Posit Cloud
+To get started, create a new project from Git repository in Posit Cloud and copy this link:
+https://github.com/drhazlienor/drhazlienor.github.io.git
 
 ## Dataset
 - [Download Leptospirosis Data XLSX](https://github.com/drhazlienor/drhazlienor.github.io/raw/main/leptospirosis.xlsx)
