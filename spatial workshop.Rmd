@@ -26,20 +26,21 @@ output:
 Required packages
 
 ```{r}
-# install.packages("sf")
-# install.packages("tidyverse") #data wrangling
-# install.packages("here") #working directory
-# install.packages("janitor")
-# install.packages("gtsummary")
-# install.packages("DT")
-# install.packages("stringr")
-# install.packages("readxl")
-# install.packages("broom")
-# install.packages("mapview")
-# install.packages("lubridate")
-# install.packages("vctrs")
-# install.packages("spatialECO") #for NNI
-# install.packages("webshot2") #screenshot webpage 
+remotes::install_github(repo = "r-spatial/sf", ref = "93a25fd8e2f5c6af7c080f92141cb2b765a04a84")
+install.packages("tidyverse") #data wrangling
+install.packages("here") #working directory
+install.packages("janitor")
+install.packages("gtsummary")
+install.packages("DT")
+install.packages("stringr")
+install.packages("readxl")
+install.packages("broom")
+install.packages("mapview")
+install.packages("lubridate")
+install.packages("mapview")
+install.packages("vctrs")
+install.packages("spatialECO") #for NNI
+install.packages("webshot2") #screenshot webpage 
 
 
 ```
@@ -56,12 +57,10 @@ library(DT)
 library(stringr)
 library(readxl)
 library(broom)
-library(tmap)
 library(mapview)
 library(lubridate)
 library(maptools)
 library(spatstat)
-library(spdep)
 library(gridExtra)
 library(sparr)
 library(grid)
