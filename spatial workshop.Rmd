@@ -27,6 +27,7 @@ Required packages
 
 ```{r}
 remotes::install_github(repo = "r-spatial/sf", ref = "93a25fd8e2f5c6af7c080f92141cb2b765a04a84")
+install.packages("sp") #spatial data
 install.packages("tidyverse") #data wrangling
 install.packages("here") #working directory
 install.packages("janitor")
@@ -40,15 +41,13 @@ install.packages("lubridate")
 install.packages("mapview")
 install.packages("vctrs")
 install.packages("spatialECO") #for NNI
-install.packages("webshot2") #screenshot webpage 
-
-
 ```
 
 Load packages
 
 ```{r}
 library(sf)
+library(sp)
 library(tidyverse)
 library(here)
 library(janitor)
@@ -59,15 +58,12 @@ library(readxl)
 library(broom)
 library(mapview)
 library(lubridate)
-library(maptools)
 library(spatstat)
 library(gridExtra)
-library(sparr)
 library(grid)
 library(spatialEco)
 library(plotly)
 library(gapminder)
-library(webshot2)
 ```
 
 # 2. Prepare Data
