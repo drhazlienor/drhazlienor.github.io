@@ -2,29 +2,786 @@
 title: "Spatial Workshop"
 author: "Hazlienor"
 date: "2024-09-10"
-output: html_document
+output: 
+  html_document:
+    keep_md: true
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+# Workflow
+
+1.  Prepare Environment
+
+2.  Prepare Data
+
+3.  Disease Map
+
+4.  Point Pattern Analysis
+
+    4.1 Density based
+
+    4.2 Distance based
+
+# 1. Prepare Environment
+
+Required packages
+
+```{r}
+# install.packages("sf")
+# install.packages("tidyverse") #data wrangling
+# install.packages("here") #working directory
+# install.packages("janitor")
+# install.packages("gtsummary")
+# install.packages("DT")
+# install.packages("stringr")
+# install.packages("readxl")
+# install.packages("broom")
+# install.packages("mapview")
+# install.packages("lubridate")
+# install.packages("vctrs")
+# install.packages("spatialECO") #for NNI
+# install.packages("webshot2") #screenshot webpage 
+
+
 ```
 
-## R Markdown
+Load packages
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+```{r}
+library(sf)
+library(tidyverse)
+library(here)
+library(janitor)
+library(gtsummary)
+library(DT)
+library(stringr)
+library(readxl)
+library(broom)
+library(tmap)
+library(mapview)
+library(lubridate)
+library(maptools)
+library(spatstat)
+library(spdep)
+library(gridExtra)
+library(sparr)
+library(grid)
+library(spatialEco)
+library(plotly)
+library(gapminder)
+library(webshot2)
 ```
 
-## Including Plots
+# 2. Prepare Data
 
-You can also embed plots, for example:
+-   Types of data: **polygon data, population data, point data**
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+-   Import Data: Load spatial and attribute data (e.g., shapefiles, CSVs) into R using functions like read.csv(), sf::st_read() for vector data, or raster::raster() for raster data.
+
+-   Clean Data: Handle missing values, correct data formats, and ensure the spatial data is properly projected using sf::st_transform() to standardize coordinate reference systems (CRS).
+
+-   Explore Data: Use basic summaries (summary(), head()) and visual checks (plot(), View()) to understand data structure.
+
+## Polygon data
+
+read polygon data - kelantan map
+
+```{r}
+kel_map <- st_read(here("Map",
+                    "kelantan.shp"))
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+**st_geometry()** extracts the geometric part (coordinates) of an sf object, allowing you to view or manipulate the spatial features
+
+```{r}
+st_geometry(kel_map)
+```
+
+## Population data
+
+read population data per subdistrict/mukim per year. You can get the population data from DOSM.
+
+```{r}
+kel_mukim <- read_xlsx(here ("pop_kel.xlsx"))
+kel_mukim %>% datatable()
+```
+
+## Point data
+
+read linelisting cointaining point data in .xlsx format
+
+```{r}
+kel_lepto <- read_xlsx("leptospirosis.xlsx") %>% clean_names()
+glimpse(kel_lepto)
+```
+
+convert all character to factor (categorical) to allow better understanding of the data
+
+```{r}
+kel_lepto <- kel_lepto %>%
+  mutate(across(where(is.character), as.factor))
+```
+
+explore the data
+
+```{r}
+summary(kel_lepto)
+```
+
+identify observation with missing coordinates. you can update the missing coordinates in the same linelisting and re-run the command
+
+```{r}
+# Identify rows with missing coordinate data
+no_coordinates <- kel_lepto %>%
+  filter(is.na(latitude_wgs) | is.na(longitude_wgs))
+
+# Print rows with no coordinates
+print(no_coordinates)
+
+```
+
+or, you can proceed with the analysis by removing the observation with no coordinates
+
+```{r}
+kel_lepto2 <- kel_lepto %>% # save to different name to avoid losing the data
+  filter(!is.na(latitude_wgs),
+         !is.na(longitude_wgs))
+glimpse(kel_lepto2)
+```
+
+## Merge data
+
+### Merge population data to polygon
+
+We want to match the two data based on MUKIM. Ensure the column containing the mukim is named the same for both data.
+
+Use **str()** to look at the structure of the data.
+
+```{r}
+str(kel_map)
+```
+
+in 'kel_map' polygon data, the column name is 'MUKIM'
+
+```{r}
+str(kel_mukim)
+```
+
+in 'kel_mukim' population data, the column name is 'subdistrict'. We will rename the 'subdistrict' variable to 'MUKIM'.
+
+```{r}
+kel_mukim <- kel_mukim %>%
+  rename(MUKIM = subdistrict)
+```
+
+```{r}
+str(kel_lepto2)
+```
+
+in 'kel_lepto2' population data, the column name is 'mukim'. We will rename the 'mukim' variable to 'MUKIM'.
+
+```{r}
+kel_lepto2 <- kel_lepto2 %>%
+  rename(MUKIM = mukim)
+```
+
+merge population data to polygon
+
+```{r}
+kel <- merge(kel_map,kel_mukim, by.x="MUKIM", by.y="MUKIM", all.x=T, sort=F)
+dim(kel)
+class(kel)
+st_crs(kel)
+```
+
+## Check CRS
+
+convert all point data to geometry (sf object). for WGS84, the CRS code is 4326.
+
+```{r}
+lepto_wgs <- st_as_sf(kel_lepto2, 
+                    coords = c("longitude_wgs", "latitude_wgs"), 
+                    crs = 4326)
+```
+
+confirm CRS is WGS 84
+
+```{r}
+st_crs(lepto_wgs)
+```
+
+covert CRS to RSO (because the CRS for polygon map is in RSO-code 3168)
+
+```{r}
+lepto_rso <- st_transform(lepto_wgs, 3168)
+```
+
+## Check for outliers
+
+plot the map to look for outliers
+
+```{r}
+ggplot() +
+  geom_sf(data = lepto_rso) +
+  theme_bw()
+```
+
+if there are outliers, recheck the coordinates, update in the same linelisting and re-run the codes from beginning. or, you can proceed with analysis by excluding points outside the map's boundaries.
+
+select point only in Kelantan
+
+```{r}
+lepto<- lepto_rso %>% 
+  mutate(within_kel_map = lengths(st_within(lepto_rso, kel_map)))
+lepto <- lepto %>% 
+  filter(within_kel_map == 1)
+glimpse(lepto)
+```
+
+# 3. Disease Map
+
+Map all the points on the Kelantan polygon map
+
+```{r name-of-chunk11, fig.width=10, fig.height=16}
+ggplot() +
+  geom_sf(data = kel_map) +
+  geom_sf(data = lepto) +
+    theme_bw() 
+```
+
+alternatively, you can plot the points on open street view map
+
+```{r}
+library(leaflet)
+library(ggmap)
+
+leaflet(data = lepto_wgs) %>%
+  addTiles() %>%  # Add default OpenStreetMap map tiles
+  addCircleMarkers(color = "red", radius = 1, fillOpacity = 0.7)
+```
+
+Map the disease by year.
+
+Adjust the size of the plot using fig.width and fig.height. Adjust the size of the font by increasing or decreasing the text size.
+
+**facet_wrap()** allows you to stratify the plot based on certain variables (eg: tahun_daftar). Change the variable name if you want to stratify based on other variables (eg: gender)
+
+```{r name-of-chunk111, fig.width=14, fig.height=20}
+ggplot() +
+  geom_sf(data = kel_map) +
+  geom_sf(data = lepto) +
+  ggtitle("Map of Leptospirosis Cases in Kelantan for 2016-2022") +
+  theme_bw() +
+  facet_wrap(~ tahun_daftar) +
+  theme(plot.title = element_text(size = 20),  strip.text = element_text(size = 20), axis.text.x=element_text(size=10), axis.text.y=element_text(size=10))
+```
+
+if you want to stratify based on more than one stratified variables (eg: gender and tahun_daftar), use **facet_grid()**
+
+```{r name-of-chunk22, fig.width=24, fig.height=15}
+ggplot() +
+  geom_sf(data = kel_map) +
+  geom_sf(data = lepto) +
+  ggtitle("Map of Leptospirosis Cases in Kelantan by gender for 2016-2022") +
+  theme_bw() +
+  facet_grid(gender ~ tahun_daftar) +
+  theme(plot.title = element_text(size = 24),  strip.text = element_text(size = 20), axis.text.x=element_text(size=10), axis.text.y=element_text(size=10))
+```
+
+Interactive plot using plotly
+
+```{r}
+library(plotly)
+
+# Example ggplot object without facet_wrap
+p <- ggplot() +
+  geom_sf(data = kel_map) +
+  geom_sf(data = lepto) +
+  ggtitle("Map of Leptospirosis Cases in Kelantan for 2016-2022") +
+  theme_bw() +
+  theme(
+    plot.title = element_text(size = 20),
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 10)
+  )
+
+# Convert the ggplot object to plotly
+ggplotly(p)
+
+```
+
+Interactive map according to year using shiny
+
+```{r, eval = FALSE}
+library(shiny)
+
+# Define UI for the application
+ui <- fluidPage(
+  titlePanel("Interactive Map of Leptospirosis Cases in Kelantan"),
+  
+  # Sidebar with two dropdowns: one for year, one for daerah
+  sidebarLayout(
+    sidebarPanel(
+      # Dropdown to select year
+      selectInput("year", "Select Year:", choices = unique(lepto$tahun_daftar)),
+      
+      # Dropdown to select daerah
+      selectInput("daerah", "Select Daerah:", choices = unique(lepto$daerah))
+    ),
+    
+    # Display the interactive plot
+    mainPanel(
+      plotlyOutput("leptoPlot")
+    )
+  )
+)
+
+# Define server logic
+server <- function(input, output) {
+  output$leptoPlot <- renderPlotly({
+    
+    # Filter data based on the selected year and daerah
+    filtered_lepto <- lepto[lepto$tahun_daftar == input$year & lepto$daerah == input$daerah, ]
+    
+    # Create the ggplot
+    p <- ggplot() +
+      geom_sf(data = kel_map) +
+      geom_sf(data = filtered_lepto) +
+      ggtitle(paste("Map of Leptospirosis Cases in", input$daerah, "for", input$year)) +
+      theme_bw() +
+      theme(
+        plot.title = element_text(size = 20),
+        axis.text.x = element_text(size = 10),
+        axis.text.y = element_text(size = 10)
+      )
+    
+    # Convert ggplot to plotly
+    ggplotly(p)
+  })
+}
+
+# Run the application
+shinyApp(ui = ui, server = server)
+
+```
+
+# 4. Point Pattern Analysis
+
+The points need to be converted to spatial data
+
+As we are goint to analyze the disease for each year, lets extract the leptospirosis cases by year
+
+```{r}
+lepto16 <- subset(lepto, tahun_daftar=="2016")
+lepto17 <- subset(lepto, tahun_daftar=="2017")
+lepto18 <- subset(lepto, tahun_daftar=="2018")
+lepto19 <- subset(lepto, tahun_daftar=="2019")
+lepto20 <- subset(lepto, tahun_daftar=="2020")
+lepto21 <- subset(lepto, tahun_daftar=="2021")
+lepto22 <- subset(lepto, tahun_daftar=="2022")
+```
+
+set observation window
+
+```{r}
+kel_map.owin <- as.owin(kel_map)
+plot(kel_map.owin)
+```
+
+Convert to spatial object
+
+```{r}
+lepto16.sp <- as(lepto16, "Spatial")
+lepto17.sp <- as(lepto17, "Spatial")
+lepto18.sp <- as(lepto18, "Spatial")
+lepto19.sp <- as(lepto19, "Spatial")
+lepto20.sp <- as(lepto20, "Spatial")
+lepto21.sp <- as(lepto21, "Spatial")
+lepto22.sp <- as(lepto22, "Spatial")
+```
+
+Convert to planar point pattern (ppp) object
+
+```{r}
+coords16 <- coordinates(lepto16.sp)  
+lepto16.ppp <- ppp(x = coords16[,1], y = coords16[,2], window = kel_map.owin)
+
+coords17 <- coordinates(lepto17.sp)  
+lepto17.ppp <- ppp(x = coords17[,1], y = coords17[,2], window = kel_map.owin)
+
+coords18 <- coordinates(lepto18.sp)  
+lepto18.ppp <- ppp(x = coords18[,1], y = coords18[,2], window = kel_map.owin)
+
+coords19 <- coordinates(lepto19.sp)  
+lepto19.ppp <- ppp(x = coords19[,1], y = coords19[,2], window = kel_map.owin)
+
+coords20 <- coordinates(lepto20.sp)  
+lepto20.ppp <- ppp(x = coords20[,1], y = coords20[,2], window = kel_map.owin)
+
+coords21 <- coordinates(lepto21.sp)  
+lepto21.ppp <- ppp(x = coords21[,1], y = coords21[,2], window = kel_map.owin)
+
+coords22 <- coordinates(lepto22.sp)  
+lepto22.ppp <- ppp(x = coords22[,1], y = coords22[,2], window = kel_map.owin)
+```
+
+## 4.1 Density-based Analysis
+
+### Quadrat analysis
+
+#### Quadrat count
+
+```{r name-of-chunk10, fig.width=28, fig.height=16}
+par( mfrow= c(2,4) ) #combine all plot in 1 view, 2 row, 4 column
+# 2016
+quadr_count_lepto16 <- quadratcount(lepto16.ppp, 
+                                  nx = 10,
+                                  ny = 14)
+plot(lepto16.ppp, pch = 20, cex = 0.1, main = "2016")
+plot(quadr_count_lepto16, add = TRUE, cex = 2)
+
+# 2017
+quadr_count_lepto17 <- quadratcount(lepto17.ppp, 
+                                  nx = 10,
+                                  ny = 14)
+plot(lepto17.ppp, pch = 20, cex = 0.1, main = "2017")
+plot(quadr_count_lepto17, add = TRUE, cex = 2)
+
+# 2018
+quadr_count_lepto18 <- quadratcount(lepto18.ppp, 
+                                  nx = 10,
+                                  ny = 14)
+plot(lepto18.ppp, pch = 20, cex = 0.1, main = "2018")
+plot(quadr_count_lepto18, add = TRUE, cex = 2)
+
+# 2019
+quadr_count_lepto19 <- quadratcount(lepto19.ppp, 
+                                  nx = 10,
+                                  ny = 14)
+plot(lepto19.ppp, pch = 20, cex = 0.1, main = "2019")
+plot(quadr_count_lepto19, add = TRUE, cex = 2)
+
+# 2020
+quadr_count_lepto20 <- quadratcount(lepto20.ppp, 
+                                  nx = 10,
+                                  ny = 14)
+plot(lepto20.ppp, pch = 20, cex = 0.1, main = "2020")
+plot(quadr_count_lepto20, add = TRUE, cex = 2)
+
+# 2021
+quadr_count_lepto21 <- quadratcount(lepto21.ppp, 
+                                  nx = 10,
+                                  ny = 14)
+plot(lepto21.ppp, pch = 20, cex = 0.1, main = "2021")
+plot(quadr_count_lepto21, add = TRUE, cex = 2)
+
+# 2022
+quadr_count_lepto22 <- quadratcount(lepto22.ppp, 
+                                  nx = 10,
+                                  ny = 14)
+plot(lepto22.ppp, pch = 20, cex = 0.1, main = "2022")
+plot(quadr_count_lepto22, add = TRUE, cex = 2)
+
+```
+
+#### Test for CSR
+
+##### Chi-squared test
+
+Chi-squared goodness-of-fit test
+
+```{r}
+chi_lepto16 <- quadrat.test(lepto16.ppp, nx= 10, ny=14)
+chi_lepto17 <- quadrat.test(lepto17.ppp, nx= 10, ny=14)
+chi_lepto18 <- quadrat.test(lepto18.ppp, nx= 10, ny=14)
+chi_lepto19 <- quadrat.test(lepto19.ppp, nx= 10, ny=14)
+chi_lepto20 <- quadrat.test(lepto20.ppp, nx= 10, ny=14)
+chi_lepto21 <- quadrat.test(lepto21.ppp, nx= 10, ny=14)
+chi_lepto22 <- quadrat.test(lepto22.ppp, nx= 10, ny=14)
+```
+
+Display result
+
+```{r}
+chi_lepto16.df <- data.frame(Dataset = "lepto16.ppp",
+                       TestStatistic = chi_lepto16$statistic,
+                       PValue = chi_lepto16$p.value)
+chi_lepto17.df <- data.frame(Dataset = "lepto17.ppp",
+                       TestStatistic = chi_lepto17$statistic,
+                       PValue = chi_lepto17$p.value)
+chi_lepto18.df <- data.frame(Dataset = "lepto18.ppp",
+                       TestStatistic = chi_lepto18$statistic,
+                       PValue = chi_lepto18$p.value)
+chi_lepto19.df <- data.frame(Dataset = "lepto19.ppp",
+                       TestStatistic = chi_lepto19$statistic,
+                       PValue = chi_lepto19$p.value)
+chi_lepto20.df <- data.frame(Dataset = "lepto20.ppp",
+                       TestStatistic = chi_lepto20$statistic,
+                       PValue = chi_lepto20$p.value)
+chi_lepto21.df <- data.frame(Dataset = "lepto21.ppp",
+                       TestStatistic = chi_lepto21$statistic,
+                       PValue = chi_lepto21$p.value)
+chi_lepto22.df <- data.frame(Dataset = "lepto22.ppp",
+                       TestStatistic = chi_lepto22$statistic,
+                       PValue = chi_lepto22$p.value)
+chi_quadlepto <- bind_rows(
+  data.frame(Dataset = "2016", chi_lepto16.df), 
+  data.frame(Dataset = "2017", chi_lepto17.df), 
+  data.frame(Dataset = "2018", chi_lepto18.df), 
+  data.frame(Dataset = "2019", chi_lepto19.df), 
+  data.frame(Dataset = "2020", chi_lepto20.df), 
+  data.frame(Dataset = "2021", chi_lepto21.df), 
+  data.frame(Dataset = "2022", chi_lepto22.df))
+  chi_quadlepto
+```
+
+##### Monte Carlo based test
+
+Monte Carlo test if chi-squared test assumption not met
+
+```{r}
+# run monte carlo test
+
+mc_qlepto16 <- quadrat.test(lepto16.ppp, nx= 10, ny=14, method = "MonteCarlo")
+mc_qlepto17 <- quadrat.test(lepto17.ppp, nx= 10, ny=14, method = "MonteCarlo")
+mc_qlepto18 <- quadrat.test(lepto18.ppp, nx= 10, ny=14, method = "MonteCarlo")
+mc_qlepto19 <- quadrat.test(lepto19.ppp, nx= 10, ny=14, method = "MonteCarlo")
+mc_qlepto20 <- quadrat.test(lepto20.ppp, nx= 10, ny=14, method = "MonteCarlo")
+mc_qlepto21 <- quadrat.test(lepto21.ppp, nx= 10, ny=14, method = "MonteCarlo")
+mc_qlepto22 <- quadrat.test(lepto22.ppp, nx= 10, ny=14, method = "MonteCarlo")
+
+# convert to data frame
+mc_qlepto16.df <- data.frame(Dataset = "lepto16.ppp",
+                       TestStatistic = mc_qlepto16$statistic,
+                       PValue = mc_qlepto16$p.value)
+mc_qlepto17.df <- data.frame(Dataset = "lepto17.ppp",
+                       TestStatistic = mc_qlepto17$statistic,
+                       PValue = mc_qlepto17$p.value)
+mc_qlepto18.df <- data.frame(Dataset = "lepto18.ppp",
+                       TestStatistic = mc_qlepto18$statistic,
+                       PValue = mc_qlepto18$p.value)
+mc_qlepto19.df <- data.frame(Dataset = "lepto19.ppp",
+                       TestStatistic = mc_qlepto19$statistic,
+                       PValue = mc_qlepto19$p.value)
+mc_qlepto20.df <- data.frame(Dataset = "lepto20.ppp",
+                       TestStatistic = mc_qlepto20$statistic,
+                       PValue = mc_qlepto20$p.value)
+mc_qlepto21.df <- data.frame(Dataset = "lepto21.ppp",
+                       TestStatistic = mc_qlepto21$statistic,
+                       PValue = mc_qlepto21$p.value)
+mc_qlepto22.df <- data.frame(Dataset = "lepto22.ppp",
+                       TestStatistic = mc_qlepto22$statistic,
+                       PValue = mc_qlepto22$p.value)
+
+# combine rows
+mc_qlepto <- bind_rows(
+  data.frame(Dataset = "2016", mc_qlepto16.df), 
+  data.frame(Dataset = "2017", mc_qlepto17.df), 
+  data.frame(Dataset = "2018", mc_qlepto18.df), 
+  data.frame(Dataset = "2019", mc_qlepto19.df), 
+  data.frame(Dataset = "2020", mc_qlepto20.df), 
+  data.frame(Dataset = "2021", mc_qlepto21.df), 
+  data.frame(Dataset = "2022", mc_qlepto22.df))
+mc_qlepto
+```
+
+A significant (p-value\<0.05) chi-square or Monte-Carlo test result would indicate that the points are clustered and non-randomly distributed, suggesting the presence of spatial processes such as spatial contagion, spatial dependence, or spatial interaction.
+
+#### Intensity analysis
+
+```{r name-of-chunk14, fig.width=16, fig.height=8}
+par( mfrow= c(2,4) )
+
+inten_lepto16 <-intensity(quadr_count_lepto16)
+plot(intensity(quadr_count_lepto16, image = TRUE), main = "2016", las = 1)
+plot(lepto16, pch = 20, cex = 0.6, add = TRUE)
+
+inten_lepto17 <-intensity(quadr_count_lepto17)
+plot(intensity(quadr_count_lepto17, image = TRUE), main = "2017", las = 1)
+plot(lepto17, pch = 20, cex = 0.6, add = TRUE)
+
+inten_lepto18 <-intensity(quadr_count_lepto18)
+plot(intensity(quadr_count_lepto18, image = TRUE), main = "2018", las = 1)
+plot(lepto18, pch = 20, cex = 0.6, add = TRUE)
+
+inten_lepto19 <-intensity(quadr_count_lepto19)
+plot(intensity(quadr_count_lepto19, image = TRUE), main = "2019", las = 1)
+plot(lepto19, pch = 20, cex = 0.6, add = TRUE)
+
+inten_lepto20 <-intensity(quadr_count_lepto20)
+plot(intensity(quadr_count_lepto20, image = TRUE), main = "2020", las = 1)
+plot(lepto20, pch = 20, cex = 0.6, add = TRUE)
+
+inten_lepto21 <-intensity(quadr_count_lepto21)
+plot(intensity(quadr_count_lepto21, image = TRUE), main = "2021", las = 1)
+plot(lepto21, pch = 20, cex = 0.6, add = TRUE)
+
+inten_lepto22 <-intensity(quadr_count_lepto22)
+plot(intensity(quadr_count_lepto22, image = TRUE), main = "2022", las = 1)
+plot(lepto22, pch = 20, cex = 0.6, add = TRUE)
+
+mtext("Intensity Maps of Leptospirosis Cases in Kelantan 2016-2022", side = 1, line = -1, cex = 1.5, outer = TRUE)
+```
+
+###Kernel Density Estimation (KDE)
+
+pre-determined bandwidth (e.g. 5000metres)
+
+```{r}
+kde.lepto16 <- density(lepto16.ppp, sigma = 5000) #2016
+kde.lepto17 <- density(lepto17.ppp, sigma = 5000) #2017
+kde.lepto18 <- density(lepto18.ppp, sigma = 5000) #2018
+kde.lepto19 <- density(lepto19.ppp, sigma = 5000) #2019
+kde.lepto20 <- density(lepto20.ppp, sigma = 5000) #2020
+kde.lepto21 <- density(lepto21.ppp, sigma = 5000) #2021
+kde.lepto22 <- density(lepto22.ppp, sigma = 5000) #2022
+```
+
+```{r name-of-chunkt14, fig.width=20, fig.height=11}
+par( mfrow= c(2,4) )
+plot(kde.lepto16, main = "2016", cex.main = 1.5, font.main = 2, las = 1)
+contour(kde.lepto16, add = TRUE)
+plot(kde.lepto17, main = "2017", cex.main = 1.5, font.main = 2, las = 1)
+contour(kde.lepto17, add = TRUE)
+plot(kde.lepto18, main = "2018", cex.main = 1.5, font.main = 2, las = 1)
+contour(kde.lepto18, add = TRUE)
+plot(kde.lepto19, main = "2019", cex.main = 1.5, font.main = 2, las = 1)
+contour(kde.lepto19, add = TRUE)
+plot(kde.lepto20, main = "2020", cex.main = 1.5, font.main = 2, las = 1)
+contour(kde.lepto20, add = TRUE)
+plot(kde.lepto21, main = "2021", cex.main = 1.5, font.main = 2, las = 1)
+contour(kde.lepto21, add = TRUE)
+plot(kde.lepto22, main = "2022", cex.main = 1.5, font.main = 2, las = 1)
+contour(kde.lepto22, add = TRUE)
+
+mtext("Kernel Density Estimate (KDE) Heatmaps of Leptospirosis Cases in Kelantan 2016-2022", side = 1, line = -1, cex = 2, outer = TRUE)
+```
+
+automated bandwidth KDE using bw selector Likelihood Cross Validation
+
+```{r}
+kde.lepto16bw <- density(lepto16.ppp, sigma = bw.ppl(lepto16.ppp))
+kde.lepto17bw <- density(lepto17.ppp, sigma = bw.ppl(lepto17.ppp))
+kde.lepto18bw <- density(lepto18.ppp, sigma = bw.ppl(lepto18.ppp))
+kde.lepto19bw <- density(lepto19.ppp, sigma = bw.ppl(lepto19.ppp))
+kde.lepto20bw <- density(lepto20.ppp, sigma = bw.ppl(lepto20.ppp))
+kde.lepto21bw <- density(lepto21.ppp, sigma = bw.ppl(lepto21.ppp))
+kde.lepto22bw <- density(lepto22.ppp, sigma = bw.ppl(lepto22.ppp))
+```
+
+```{r name-of-chunk1a4, fig.width=20, fig.height=11}
+par( mfrow= c(2,4) )
+plot(kde.lepto16bw, main = "2016", cex.main = 1.5, cex.axis = 2, font.main = 2, las = 1)
+contour(kde.lepto16bw, add = TRUE)
+plot(kde.lepto17bw, main = "2017", cex.main = 1.5, cex.axis = 2, font.main = 2, las = 1)
+contour(kde.lepto17bw, add = TRUE)
+plot(kde.lepto18bw, main = "2018", cex.main = 1.5, cex.axis = 2, font.main = 2, las = 1)
+contour(kde.lepto18bw, add = TRUE)
+plot(kde.lepto19bw, main = "2019", cex.main = 1.5, cex.axis = 2, font.main = 2, las = 1)
+contour(kde.lepto19bw, add = TRUE)
+plot(kde.lepto20bw, main = "2020", cex.main = 1.5, cex.axis = 2, font.main = 2, las = 1)
+contour(kde.lepto20bw, add = TRUE)
+plot(kde.lepto21bw, main = "2021", cex.main = 1.5, cex.axis = 2, font.main = 2, las = 1)
+contour(kde.lepto21bw, add = TRUE)
+plot(kde.lepto22bw, main = "2022", cex.main = 1.5, cex.axis = 2, font.main = 2, las = 1)
+contour(kde.lepto22bw, add = TRUE)
+
+mtext("Kernel Density Estimate (KDE) Heatmaps of Leptospirosis Cases in Kelantan 2016-2022", side = 1, line = -1, cex = 2, outer = TRUE)
+```
+
+**Peaks**: Peaks in the KDE plot represent areas where data points are concentrated, indicating higher density or probability of observations in those regions. The height of a peak shows how likely it is to find data points within that range.
+
+**Spread/Width**: The width or spread of the KDE curve indicates the variability of the data. A wider curve suggests that the data points are more spread out, while a narrower curve indicates that the data points are concentrated in a smaller range.
+
+**Shape**: The shape of the KDE plot can give insights into the distribution of your data. For instance:
+
+**Unimodal**: A single peak suggests the data follows a normal-like distribution or another unimodal distribution.
+
+**Bimodal/Multimodal**: Multiple peaks indicate that the data may have more than one mode, or there are distinct groups or clusters in the dataset.
+
+The lighter the color, the higher the density
+
+## 4.2 Distance-based Analysis
+
+### Average Nearest Neighbor (ANN) Analysis
+
+The Average Nearest Neighbor (ANN) method measures the distance from each point in a point pattern to its nearest neighboring point and calculates the average of these distances.
+
+This method focuses on local point-to-point relationships and is used to detect clustering or dispersion at a single scale (i.e., based on the nearest neighbor distance).
+
+```{r}
+ann16 <- round(mean(nndist(lepto16.ppp)), 2)
+ann17 <- round(mean(nndist(lepto17.ppp)), 2)
+ann18 <- round(mean(nndist(lepto18.ppp)), 2)
+ann19 <- round(mean(nndist(lepto19.ppp)), 2)
+ann20 <- round(mean(nndist(lepto20.ppp)), 2)
+ann21 <- round(mean(nndist(lepto21.ppp)), 2)
+ann22 <- round(mean(nndist(lepto22.ppp)), 2)
+```
+
+```{r}
+annual_ann <- data.frame(
+  Year = c(2016, 2017, 2018, 2019, 2020, 2021, 2022),
+  Nearest_Neighbor_Distance = c(ann16, ann17, ann18, ann19, ann20, ann21, ann22)
+)
+print(annual_ann)
+
+```
+
+##### Nearest Neigbour Index (NNI)
+
+If the index (average nearest neighbor ratio) is less than 1, the pattern exhibits clustering. If the index is greater than 1, the trend is toward dispersion.
+
+```{r}
+nni16 <-nni(lepto16)
+nni17 <-nni(lepto17)
+nni18 <-nni(lepto18)
+nni19 <-nni(lepto19)
+nni20 <-nni(lepto20)
+nni21 <-nni(lepto21)
+nni22 <-nni(lepto22)
+
+annual_nni <- bind_rows(
+  data.frame(Dataset = "2016", nni16),
+  data.frame(Dataset = "2017", nni17),
+  data.frame(Dataset = "2018", nni18),
+  data.frame(Dataset = "2019", nni19),
+  data.frame(Dataset = "2020", nni20),
+  data.frame(Dataset = "2021", nni21),
+  data.frame(Dataset = "2022", nni22)
+)
+annual_nni
+```
+
+### Functions
+
+#### G-function
+
+Empirical values greater than theoretical (Poisson) values suggest clustering. Envelope denote simulations to test for CSR
+
+```{r name-of-chunk25, fig.width=28, fig.height=14}
+par( mfrow= c(2,4) )
+G_lepto16 <- plot(envelope(lepto16.ppp, Gest, nsim = 99, verbose = FALSE))
+G_lepto17 <- plot(envelope(lepto17.ppp, Gest, nsim = 99, verbose = FALSE))
+G_lepto18 <- plot(envelope(lepto18.ppp, Gest, nsim = 99, verbose = FALSE))
+G_lepto19 <- plot(envelope(lepto19.ppp, Gest, nsim = 99, verbose = FALSE))
+G_lepto20 <- plot(envelope(lepto20.ppp, Gest, nsim = 99, verbose = FALSE))
+G_lepto21 <- plot(envelope(lepto21.ppp, Gest, nsim = 99, verbose = FALSE))
+G_lepto22 <- plot(envelope(lepto22.ppp, Gest, nsim = 99, verbose = FALSE))
+```
+
+#### K-function
+
+Empirical values greater than theoretical (Poisson) values suggest clustering. Envelope denote simulations to test for CSR Takes long time, for demonstration purpose, we will set the Monte Carlo simulation to only 3
+
+```{r name-of-chunk35, fig.width=28, fig.height=14}
+par( mfrow= c(2,4) )
+K_lepto16 <- plot(envelope(lepto16.ppp, Kest, nsim = 3, verbose = FALSE))
+K_lepto17 <- plot(envelope(lepto17.ppp, Kest, nsim = 3, verbose = FALSE))
+K_lepto18 <- plot(envelope(lepto18.ppp, Kest, nsim = 3, verbose = FALSE))
+K_lepto19 <- plot(envelope(lepto19.ppp, Kest, nsim = 3, verbose = FALSE))
+K_lepto20 <- plot(envelope(lepto20.ppp, Kest, nsim = 3, verbose = FALSE))
+K_lepto21 <- plot(envelope(lepto21.ppp, Kest, nsim = 3, verbose = FALSE))
+K_lepto22 <- plot(envelope(lepto22.ppp, Kest, nsim = 3, verbose = FALSE))
+```
+
+other summary function - Lest, Fest, pcf
