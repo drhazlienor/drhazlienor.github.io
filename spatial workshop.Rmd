@@ -42,11 +42,16 @@ install.packages("mapview")
 install.packages("vctrs")
 install.packages("spatialECO") #for NNI
 ```
-
-Load packages
-
 ```{r}
 library(remotes)
+```
+```{r}
+remotes::install_github(repo = "r-spatial/sf", ref = "93a25fd8e2f5c6af7c080f92141cb2b765a04a84")
+```
+
+Load packages
+```{r}
+library(sf)
 library(sp)
 library(tidyverse)
 library(here)
@@ -65,10 +70,7 @@ library(spatialEco)
 library(plotly)
 library(gapminder)
 ```
-```{r}
-remotes::install_github(repo = "r-spatial/sf", ref = "93a25fd8e2f5c6af7c080f92141cb2b765a04a84")
-library(sf)
-```
+
 # 2. Prepare Data
 
 -   Types of data: **polygon data, population data, point data**
